@@ -1,0 +1,57 @@
+name: ESP32 Automated FOTA Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      target_device:
+        description: 'Target Device ID (e.g. esp32_739678)'
+        required: true
+        default: 'esp32_739678'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    container: espressif/idf:latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Compile ESP-IDF Firmware
+        run: |
+          . $IDF_PATH/export.sh
+          idf.py build
+
+      - name: Generate Version Timestamp
+        id: vars
+        run: |
+          VERSION=$(date +%s%3N)
+          TAG_NAME="v_${VERSION}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+          TARGET="${{ github.event.inputs.target_device }}"
+          if [ -z "$TARGET" ]; then TARGET="esp32_739678"; fi
+          echo "target_device=${TARGET}" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release Artifact
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.tag_name }}
+          name: "Release ${{ steps.vars.outputs.tag_name }}"
+          files: build/esp_ota.bin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Patch Firebase RTDB
+        run: |
+          FIRMWARE_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.vars.outputs.tag_name }}/esp_ota.bin"
+          FIREBASE_URL="https://${{ secrets.FIREBASE_DB_NAME }}.asia-southeast1.firebasedatabase.app/users/${{ secrets.USER_UID }}/devices/${{ steps.vars.outputs.target_device }}.json"
+
+          echo "Broadcasting to target: ${{ steps.vars.outputs.target_device }}"
+          echo "Binary URL: $FIRMWARE_URL"
+
+          curl -s -X PATCH "$FIREBASE_URL" \
+            -H "Content-Type: application/json" \
+            -d "{\"version\": ${{ steps.vars.outputs.version }}, \"firmwareUrl\": \"$FIRMWARE_URL\"}"
