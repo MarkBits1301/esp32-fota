@@ -31,7 +31,7 @@
 
 // --- HARDWARE PIN DEFINITIONS ---
 #define BOOT_BUTTON_GPIO    GPIO_NUM_0    // Hold 3s to factory wipe NVS
-#define BLINK_GPIO          GPIO_NUM_2    // Status Beacon
+#define BLINK_GPIO          GPIO_NUM_2    // Onboard Blue Status LED
 #define RELAY_1_GPIO        GPIO_NUM_23
 #define RELAY_2_GPIO        GPIO_NUM_22
 #define RELAY_3_GPIO        GPIO_NUM_21
@@ -654,7 +654,7 @@ static void ota_polling_task(void *pvParameters)
 
     char boot_msg[192];
     snprintf(boot_msg, sizeof(boot_msg),
-             ">>> FLEET NODE [%s] ONLINE | Wi-Fi: %s | IP: %s <<<", s_device_id, s_active_ssid, s_device_ip);
+             ">>> [BLINK TEST VERIFIED] FLEET NODE [%s] ONLINE | Wi-Fi: %s | IP: %s <<<", s_device_id, s_active_ssid, s_device_ip);
     cloud_print(boot_msg);
 
     // Initial sync of current states to Firebase
@@ -735,7 +735,23 @@ static void ota_polling_task(void *pvParameters)
 }
 
 // ============================================================================
-// 8. WI-FI EVENT STACK
+// 8. RAPID BLINK TEST TASK (GPIO 2 - BLUE ONBOARD LED)
+// ============================================================================
+static void blink_test_task(void *pvParameters)
+{
+    gpio_reset_pin(BLINK_GPIO);
+    gpio_set_direction(BLINK_GPIO, GPIO_MODE_OUTPUT);
+
+    while (1) {
+        gpio_set_level(BLINK_GPIO, 1);
+        vTaskDelay(pdMS_TO_TICKS(150)); // 150ms ON
+        gpio_set_level(BLINK_GPIO, 0);
+        vTaskDelay(pdMS_TO_TICKS(150)); // 150ms OFF
+    }
+}
+
+// ============================================================================
+// 9. WI-FI EVENT STACK
 // ============================================================================
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
@@ -763,11 +779,7 @@ void app_main(void)
     // 2. Discover Hardware Identity and Configure Endpoints
     init_device_identity();
 
-    // 3. Configure Hardware Pins
-    gpio_reset_pin(BLINK_GPIO);
-    gpio_set_direction(BLINK_GPIO, GPIO_MODE_OUTPUT);
-    gpio_set_level(BLINK_GPIO, 1);
-
+    // 3. Configure Relay Pins
     for (int i = 0; i < 4; i++) {
         gpio_reset_pin(s_relay_pins[i]);
         gpio_set_direction(s_relay_pins[i], GPIO_MODE_OUTPUT);
@@ -776,7 +788,10 @@ void app_main(void)
     // 4. Restore Relay States from NVS immediately (Power Cut Memory)
     load_relay_states_from_nvs();
 
-    // 5. Initialize Network Stack
+    // 5. Start Rapid Blink Task (Confirms Firmware is Running)
+    xTaskCreate(&blink_test_task, "blink_test_task", 2048, NULL, 5, NULL);
+
+    // 6. Initialize Network Stack
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
